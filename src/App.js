@@ -1,15 +1,25 @@
-import React, { useLayoutEffect, useState } from "react";
+import React, { useLayoutEffect, useState, useEffect } from "react";
 import rough from "roughjs/bundled/rough.esm";
+import { getStroke } from "perfect-freehand";
 
 const generator = rough.generator();
 
 // create line element using roughjs and return the element with its coordinates, at any random position on the canvas
-function createElement(id, x1, y1, x2, y2, type) {
-  const roughElement =
-    type === "line"
+const createElement = (id, x1, y1, x2, y2, type) => {
+  switch (type) {
+    case "line":
+    case "rectangle":
+          const roughElement = type === "line"
       ? generator.line(x1, y1, x2, y2)
       : generator.rectangle(x1, y1, x2 - x1, y2 - y1);
-  return { id, x1, y1, x2, y2, type, roughElement };
+      return { id, x1, y1, x2, y2, type, roughElement };
+    case "pencil":
+      // todo
+      return {id, type, points: [{x: x1, y: y1,}]
+    };
+    default:
+      throw new Error("unknown type: " + type);
+  }
 }
 //  check if the point is near the element, if it's a line or a rectangle, check if it's near the start or end point of the line or the corners of the rectangle respectively
 const nearPoint = (x, y, x1, y1, name) => {
@@ -136,12 +146,53 @@ const useHistory = (initialState) => {
   return [history[index], setState, undo, redo];
 }
 
+const adjustmentRequired = type =>  ["rectangle","line"].includes(type); // for the pencil element, we don't need to adjust the coordinates of the element, as the points are stored in the points array, and we can use the points array to draw the pencil element on the canvas
+
+// get the SVG path data from the stroke points, we can use the reduce function to loop through the stroke points and create a path data string, we can use the "M" command to move to the first point, and then use the "Q" command to create a quadratic bezier curve to the next point, and then use the "Z" command to close the path
+function getSvgPathFromStroke(stroke) {
+  if (!stroke.length) return "";
+// if the stroke array is empty, return an empty string
+  const d = stroke.reduce(
+    (acc, [x0, y0], i, arr) => {
+      const [x1, y1] = arr[(i + 1) % arr.length];
+      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+      return acc;
+    },
+    ["M", ...stroke[0], "Q"]
+  );
+
+  d.push("Z");
+  return d.join(" ");
+}
+
+// draw the element on the canvas, if it's a line or a rectangle, use the roughjs library to draw the element, if it's a pencil, use the getSvgPathFromStroke function to get the SVG path data from the stroke points and then use the fill method of the context to fill the path
+const drawElement = (roughCanvas, context, element) => {
+  switch (element.type) {
+    case "line":
+    case "rectangle":
+      roughCanvas.draw(element.roughElement);
+      break;
+      // for the pencil element, we can use the getSvgPathFromStroke function to get the SVG path data from the stroke points and then use the fill method of the context to fill the path
+    case "pencil":
+      const outlinePoints = getSvgPathFromStroke(getStroke(element.points, {
+        size: 8 
+      }))
+      // const pathData = getSvgPathFromStroke(outlinePoints)
+      // create a new Path2D object from the path data and fill it with the context
+      context.fill( new Path2D(outlinePoints));
+      break;
+    default:
+      throw new Error("unknown type: " + element.type);
+    
+  }
+}
+
 const App = () => {
   // elements state to store the elements on the canvas, action state to store the current action 
   // (drawing, moving, resizing), tool state to store the current tool (line, rectangle, selection), selectedElement state to store the currently selected element
   const [elements, setElements, undo, redo] = useHistory([]);
   const [action, setAction] = useState("none");
-  const [tool, setTool] = useState("line");
+  const [tool, setTool] = useState("pencil");
   const [selectedElement, setSelectedElement] = useState(null);
 
   useLayoutEffect(() => {
@@ -154,7 +205,7 @@ const App = () => {
     // rough canvas instance
     const roughCanvas = rough.canvas(canvas);
     // draw all the elements on the canvas
-    elements.forEach(({ roughElement }) => roughCanvas.draw(roughElement));
+    elements.forEach(element => drawElement(roughCanvas, context, element));
   }, [elements]);
 
   // add event listener for undo and redo functionality, if the user presses ctrl + z or cmd + z, call the undo function, if the user presses ctrl + shift + z or cmd + shift + z, call the redo function
@@ -177,12 +228,24 @@ const App = () => {
 
   // update the element in the elements state, we can create a new element with the updated coordinates and replace the old element in the elements state with the new element
   const updateElement = (id, x1, y1, x2, y2, type) => {
-    const updateElement = createElement(id, x1, y1, x2, y2, type);
+    const elementsCopy = [...elements];
 
     // create a copy of the elements state and replace the old element in the elements state with the new element, then update the elements state with the new elements array, we can use the setElements function to update the elements state
-      const elementsCopy = [...elements];
-      elementsCopy[id] = updateElement;
-      setElements(elementsCopy, true);
+    switch (type) {
+      // for the line and rectangle elements, we can use the createElement function to create a new element with the 
+      // updated coordinates and replace the old element in the elements state with the new element, then update the elements state with the new elements array
+    case "line":
+    case "rectangle":
+      elementsCopy[id] = createElement(id, x1, y1, x2, y2, type);;  
+      break;
+      // for the pencil element, we can add the new point to the points array of the selected element, then update the elements state with the new elements array
+    case "pencil":
+      elementsCopy[id].points = [...elementsCopy[id].points, {x: x2, y: y2}];
+      break;
+    default:
+      throw new Error("unknown type: " + type);
+    }
+    setElements(elementsCopy, true);     
   }
 
   // handle mouse down event, if the tool is selection, check if the mouse is near any of the elements, if it is, set the selected element and the action to moving or resizing based on the position of the mouse relative to the element, if the tool is not selection, create a new element and set the action to drawing
@@ -253,7 +316,10 @@ const App = () => {
     if(selectedElement) {  // 
       const index = selectedElement.id;
       const { id, type } = elements[index];    
-      if (action === "drawing" || action === "resizing") {
+      // if the action is drawing or resizing, update the coordinates of the selected element based on the position of the mouse and the position of the element, 
+      // we can use the adjustElementCoordinates function to adjust the coordinates of the selected element to ensure that x1, y1 is the top left corner and x2, y2 is the bottom right corner for the rectangle element, 
+      // and for the line element, ensure that x1, y1 is the start point and x2, y2 is the end point, and then use the updateElement function to update the coordinates of the selected element in the elements state
+      if ((action === "drawing" || action === "resizing") && adjustmentRequired(type)) {
         const { x1, y1, x2, y2 } = adjustElementCoordinates(elements[index]);
         updateElement(id, x1, y1, x2, y2, type);
       }
@@ -287,6 +353,14 @@ const App = () => {
           onChange={() => setTool("rectangle")}
         />
         <label htmlFor="rectangle">rectangle</label>
+        
+        <input
+          type="radio"
+          id="pencil"
+          checked={tool === "pencil"}
+          onChange={() => setTool("pencil")}
+        />
+        <label htmlFor="pencil">Pencil</label>
       </div>
       {/* buttons for undo and redo */}
       <div style={{position: "fixed", bottom: 0, padding: 12}}>
