@@ -157,6 +157,24 @@ const App = () => {
     elements.forEach(({ roughElement }) => roughCanvas.draw(roughElement));
   }, [elements]);
 
+  // add event listener for undo and redo functionality, if the user presses ctrl + z or cmd + z, call the undo function, if the user presses ctrl + shift + z or cmd + shift + z, call the redo function
+  useEffect( () => {
+    const undoRedoFunction = event => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'z') {
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", undoRedoFunction);
+    return () => {
+      document.removeEventListener("keydown", undoRedoFunction);
+    }
+  })
+
   // update the element in the elements state, we can create a new element with the updated coordinates and replace the old element in the elements state with the new element
   const updateElement = (id, x1, y1, x2, y2, type) => {
     const updateElement = createElement(id, x1, y1, x2, y2, type);
