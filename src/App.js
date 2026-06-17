@@ -108,10 +108,38 @@ const resizedCoordinates = (clientX, clientY, position, coordinates) => {
     }
 }
 
+// custom hook to manage the history of the elements state, it returns the current state of the elements, a function to update the state, and functions for undo and redo functionality
+const useHistory = (initialState) => {
+  const [index, setIndex] = useState(0);
+  const [history, setHistory] = useState([initialState]);
+
+  // setState function to update the history array with the new state, if overwrite is true, replace the current state in the history array with the new state, otherwise add the new state to the end of the history array and increment the index state to point to the new state
+  const setState = (action, overwrite = false) => {
+    const newState = typeof action === "function" ? action(history[index]) : action;
+    if(overwrite){
+// if overwrite is true, replace the current state in the history array with the new state, we can create a copy of the history array and replace the current state in the history array with the new state, then update the history state with the new history array
+      const historyCopy = [...history];
+      historyCopy[index] = newState;
+      setHistory(historyCopy)
+    }else{
+      const updatedState = [...history].slice(0, index + 1);
+      // if overwrite is false, add the new state to the end of the history array and increment the index state to point to the new state, we can use the setHistory function to add the new state to the end of the history array, and then use the setIndex function to increment the index state to point to the new state
+      setHistory(prevState => [...updatedState, newState]);
+      setIndex(prevState => prevState + 1)
+    }
+  }
+
+  // for undo and redo functionality, we can use the index state to keep track of the current state in the history array, and the setHistory function to update the history array with the new state, when the undo button is clicked, we can decrement the index state to go back to the previous state in the history array, and when the redo button is clicked, we can increment the index state to go forward to the next state in the history array
+  const undo = () => index > 0 && setIndex(prevState => prevState - 1)
+  const redo = () => index < history.length - 1 && setIndex(prevState => prevState + 1)
+
+  return [history[index], setState, undo, redo];
+}
+
 const App = () => {
   // elements state to store the elements on the canvas, action state to store the current action 
   // (drawing, moving, resizing), tool state to store the current tool (line, rectangle, selection), selectedElement state to store the currently selected element
-  const [elements, setElements] = useState([]);
+  const [elements, setElements, undo, redo] = useHistory([]);
   const [action, setAction] = useState("none");
   const [tool, setTool] = useState("line");
   const [selectedElement, setSelectedElement] = useState(null);
@@ -133,9 +161,10 @@ const App = () => {
   const updateElement = (id, x1, y1, x2, y2, type) => {
     const updateElement = createElement(id, x1, y1, x2, y2, type);
 
+    // create a copy of the elements state and replace the old element in the elements state with the new element, then update the elements state with the new elements array, we can use the setElements function to update the elements state
       const elementsCopy = [...elements];
       elementsCopy[id] = updateElement;
-      setElements(elementsCopy);
+      setElements(elementsCopy, true);
   }
 
   // handle mouse down event, if the tool is selection, check if the mouse is near any of the elements, if it is, set the selected element and the action to moving or resizing based on the position of the mouse relative to the element, if the tool is not selection, create a new element and set the action to drawing
@@ -147,6 +176,7 @@ const App = () => {
         const offsetX = clientX - element.x1; // calculate the offset of the mouse click from the top left corner of the element, this will be used to move the element based on the movement of the mouse
         const offsetY = clientY - element.y1;
         setSelectedElement({...element, offsetX, offsetY});
+        setElements(prevState => prevState)
 
         if(element.position === "inside"){ // if the position of the mouse is inside the element, set the action to moving, otherwise set the action to resizing
           setAction("moving");
@@ -202,11 +232,13 @@ const App = () => {
   };
   // handle mouse up event, if the action is drawing or resizing, update the coordinates of the selected element based on the position of the mouse and the position of the element, we can use the adjustElementCoordinates function to adjust the coordinates of the selected element to ensure that x1, y1 is the top left corner and x2, y2 is the bottom right corner for the rectangle element, and for the line element, ensure that x1, y1 is the start point and x2, y2 is the end point, and then use the updateElement function to update the coordinates of the selected element in the elements state
   const handleMouseUp = () => {
-    const index = selectedElement.id;
-    const { id, type } = elements[index];    
-    if (action === "drawing" || action === "resizing") {
-      const { x1, y1, x2, y2 } = adjustElementCoordinates(elements[index]);
-      updateElement(id, x1, y1, x2, y2, type);
+    if(selectedElement) {  // 
+      const index = selectedElement.id;
+      const { id, type } = elements[index];    
+      if (action === "drawing" || action === "resizing") {
+        const { x1, y1, x2, y2 } = adjustElementCoordinates(elements[index]);
+        updateElement(id, x1, y1, x2, y2, type);
+      }
     }
     setAction("none");
     setSelectedElement(null);
@@ -237,6 +269,11 @@ const App = () => {
           onChange={() => setTool("rectangle")}
         />
         <label htmlFor="rectangle">rectangle</label>
+      </div>
+      {/* buttons for undo and redo */}
+      <div style={{position: "fixed", bottom: 0, padding: 12}}>
+        <button onClick={undo}>Undo</button>
+        <button onClick={redo}>Redo</button>
       </div>
 
       <canvas
